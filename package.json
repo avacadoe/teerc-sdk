@@ -1,0 +1,21 @@
+{
+  "name": "@ava-labs/ac-eerc-sdk",
+  "version": "1.0.0",
+  "module": "src/index.ts",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^18.3.3",
+    "react": "^18.3.1"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "private": true,
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "type": "module"
+}
