@@ -84,7 +84,7 @@ export const ERC34_ABI = [
   },
   {
     inputs: [],
-    name: "ParamatersAlreadySet",
+    name: "ParametersAlreadySet",
     type: "error",
   },
   {
@@ -342,6 +342,107 @@ export const ERC34_ABI = [
       },
     ],
     name: "balanceOf",
+    outputs: [
+      {
+        components: [
+          {
+            components: [
+              {
+                internalType: "uint256",
+                name: "x",
+                type: "uint256",
+              },
+              {
+                internalType: "uint256",
+                name: "y",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct Point",
+            name: "c1",
+            type: "tuple",
+          },
+          {
+            components: [
+              {
+                internalType: "uint256",
+                name: "x",
+                type: "uint256",
+              },
+              {
+                internalType: "uint256",
+                name: "y",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct Point",
+            name: "c2",
+            type: "tuple",
+          },
+        ],
+        internalType: "struct CipherText",
+        name: "whole",
+        type: "tuple",
+      },
+      {
+        components: [
+          {
+            components: [
+              {
+                internalType: "uint256",
+                name: "x",
+                type: "uint256",
+              },
+              {
+                internalType: "uint256",
+                name: "y",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct Point",
+            name: "c1",
+            type: "tuple",
+          },
+          {
+            components: [
+              {
+                internalType: "uint256",
+                name: "x",
+                type: "uint256",
+              },
+              {
+                internalType: "uint256",
+                name: "y",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct Point",
+            name: "c2",
+            type: "tuple",
+          },
+        ],
+        internalType: "struct CipherText",
+        name: "fractional",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        internalType: "address",
+        name: "_account",
+        type: "address",
+      },
+      {
+        internalType: "address",
+        name: "_tokenAddress",
+        type: "address",
+      },
+    ],
+    name: "balanceOfFromAddress",
     outputs: [
       {
         components: [
@@ -965,16 +1066,6 @@ export const ERC34_ABI = [
         internalType: "struct BurnProof",
         name: "_proof",
         type: "tuple",
-      },
-      {
-        internalType: "uint256",
-        name: "_whole",
-        type: "uint256",
-      },
-      {
-        internalType: "uint256",
-        name: "_fractional",
-        type: "uint256",
       },
       {
         internalType: "uint256",
