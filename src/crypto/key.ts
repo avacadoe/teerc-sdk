@@ -1,15 +1,15 @@
 import createBlakeHash from "blake-hash";
 import { sha256 } from "js-sha256";
 import { SHA_256_MAX_DIGEST, SNARK_FIELD_SIZE } from "../utils";
-import { BabyJub } from "./babyjub";
 import { Scalar } from "./scalar";
 
 // formats private key for the curve
+// input is hex string
 export const formatKeyForCurve = (key: string): bigint => {
   let hash = createBlakeHash("blake512")
     .update(Buffer.from(key, "hex"))
-    .digest();
-  hash = hash.slice(0, 32);
+    .digest()
+    .slice(0, 32);
 
   const pruneBuffer = (buff: Buffer) => {
     buff[0] &= 0xf8;
@@ -24,7 +24,7 @@ export const formatKeyForCurve = (key: string): bigint => {
   hash = pruneBuffer(hash);
   hash = leBufferToBigInt(hash);
 
-  return Scalar.shiftRight(hash, 3) % BabyJub.subOrder();
+  return Scalar.shiftRight(hash, 3);
 };
 
 export const getPrivateKeyFromSignature = (signature: string): string => {
@@ -33,7 +33,7 @@ export const getPrivateKeyFromSignature = (signature: string): string => {
   return grindKey(r);
 };
 
-const grindKey = (seed: string): string => {
+export const grindKey = (seed: string): string => {
   const limit = SNARK_FIELD_SIZE;
   const maxAllowedValue = SHA_256_MAX_DIGEST - (SHA_256_MAX_DIGEST % limit);
 

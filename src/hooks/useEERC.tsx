@@ -3,7 +3,7 @@ import {
   type PublicClient,
   type WalletClient,
   useContractRead,
-  useContractWrite,
+  useContractReads,
 } from "wagmi";
 import { EERC } from "../EERC";
 import type { Point } from "../crypto/types";
@@ -21,23 +21,29 @@ export function useEERC(
   const [isConverter, setIsConverter] = useState<boolean>();
   const [auditorPublicKey, setAuditorPublicKey] = useState<bigint[]>([]);
 
+  const [name, setName] = useState<string>();
+  const [symbol, setSymbol] = useState<string>();
+
   // isRegistered to the contract
   const [isRegistered, setIsRegistered] = useState(false);
 
-  // check if the contract is converter or not
-  useContractRead({
+  const eercContract = {
     address: contractAddress as `0x${string}`,
     abi: ERC34_ABI,
+  };
+
+  // check if the contract is converter or not
+  useContractRead({
+    ...eercContract,
     functionName: "isConverter",
     enabled: !!contractAddress,
     args: [],
     onSuccess: (_isConverter: boolean) => setIsConverter(_isConverter),
   });
 
-  // auditor public key
+  // get auditor public key
   useContractRead({
-    abi: eerc?.abi,
-    address: contractAddress as `0x${string}`,
+    ...eercContract,
     functionName: "getAuditorPublicKey",
     args: [],
     onSuccess: (publicKey) => setAuditorPublicKey(publicKey as bigint[]),
@@ -46,8 +52,7 @@ export function useEERC(
 
   // check if the user is registered or not
   useContractRead({
-    address: contractAddress as `0x${string}`,
-    abi: eerc?.abi,
+    ...eercContract,
     functionName: "getUser",
     args: [wallet?.account.address],
     enabled: !!eerc && !!wallet.account.address,
@@ -59,16 +64,47 @@ export function useEERC(
     },
   });
 
+  // fetches the name and symbol of the EERC
+  useContractReads({
+    contracts: [
+      {
+        ...eercContract,
+        functionName: "name",
+        args: [],
+      },
+      {
+        ...eercContract,
+        functionName: "symbol",
+        args: [],
+      },
+    ],
+    enabled: !isConverter && !!contractAddress,
+    onSuccess: (results: { result: string; status: string }[]) => {
+      setName(results[0].result);
+      setSymbol(results[1].result);
+    },
+  });
+
+  // sets auditor public key
   const setAuditor = async (publicKey: Point) => {
     try {
       const transactionHash = await wallet?.writeContract({
-        abi: ERC34_ABI,
-        address: contractAddress as `0x${string}`,
+        ...eercContract,
         functionName: "setAuditorPublicKey",
         args: [publicKey],
       });
 
       return transactionHash;
+    } catch (error) {
+      throw new Error(error as string);
+    }
+  };
+
+  // sets auditor public key as user's public key
+  const setMyselfAsAuditor = async () => {
+    try {
+      if (!eerc || !eerc.publicKey) return;
+      return setAuditor(eerc.publicKey as Point);
     } catch (error) {
       throw new Error(error as string);
     }
@@ -103,36 +139,56 @@ export function useEERC(
     };
   }, [client, wallet, contractAddress, decryptionKey, isConverter]);
 
-  // expose register function to the user
+  // registers the user to the EERC contract
   const register = useCallback(() => {
     if (!eerc) return;
     return eerc.register();
   }, [eerc]);
 
-  // expose register function to the user
+  // decrypt the encrypted data by the auditor public key
   const auditorDecrypt = useCallback(() => {
     if (!eerc) return;
     return eerc.auditorDecrypt();
   }, [eerc]);
 
+  // check is the address is registered to the contract
+  const isAddressRegistered = async (address: `0x${string}`) => {
+    try {
+      const result = await client.readContract({
+        ...eercContract,
+        functionName: "getUser",
+        args: [address],
+      });
+
+      return result;
+    } catch (error) {
+      throw new Error(error as string);
+    }
+  };
+
+  // returns the encrypted balance hook
   const useEncryptedBalanceHook = (tokenAddress?: `0x${string}`) =>
     useEncryptedBalance(eerc, contractAddress, wallet, tokenAddress);
 
   return {
-    isInitialized,
-    isRegistered,
-    isConverter,
-    publicKey: eerc?.publicKey,
-    auditorPublicKey,
+    isInitialized, // is sdk initialized
+    isRegistered, // is user registered to the contract
+    isConverter, // is contract converter
+    publicKey: eerc?.publicKey, // user's public key
+    auditorPublicKey, // auditor's public key
     isAuditorKeySet:
       auditorPublicKey.length &&
       auditorPublicKey[0] !== 0n &&
-      auditorPublicKey[1] !== 0n,
+      auditorPublicKey[1] !== 0n, // is auditor's public key set if not need to set before interacting with the contract
+    name, // EERC name, (only for stand-alone version)
+    symbol, // EERC symbol, (only for stand-alone version)
 
     // functions
-    register,
-    setAuditor,
-    auditorDecrypt,
+    register, // register user to the contract
+    setAuditor, // set auditor public key
+    setMyselfAsAuditor, // set user's public key as auditor's public key
+    auditorDecrypt, // auditor decryption
+    isAddressRegistered, // function for checking address is registered or not
 
     // hooks
     useEncryptedBalance: useEncryptedBalanceHook,

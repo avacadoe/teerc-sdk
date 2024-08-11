@@ -10,7 +10,6 @@ import { Scalar } from "./crypto/scalar";
 import type { Point } from "./crypto/types";
 import { ProofGenerator } from "./helpers";
 import { ProofType } from "./helpers/types";
-import type { EncryptedBalance } from "./hooks/types";
 import {
   ERC34_ABI,
   LOOKUP_TABLE_URL,
@@ -22,11 +21,11 @@ export class EERC {
   private client: PublicClient;
   private wallet: WalletClient;
 
+  // crypto
   public curve: BabyJub;
   public field: FF;
   public poseidon: Poseidon;
   public bsgs: BSGS;
-
   public proofGenerator: ProofGenerator;
 
   // contract field
@@ -34,16 +33,16 @@ export class EERC {
   public isConverter: boolean;
   public abi = ERC34_ABI;
 
+  // user field
+  private decryptionKey: string;
+  public publicKey: bigint[] = [];
+
   // burn user is used for private burn transactions
   // instead of burning tokens, they are transferred to the burn user
   public BURN_USER = {
     address: "0x1111111111111111111111111111111111111111",
     publicKey: [0n, 1n],
   };
-
-  // user field
-  private decryptionKey: string;
-  public publicKey: bigint[] = [];
 
   constructor(
     client: PublicClient,
@@ -77,7 +76,6 @@ export class EERC {
   // function to register a new user to the contract
   async register(): Promise<{
     key: string;
-    error: string;
     transactionHash: string;
   }> {
     if (!this.wallet || !this.client || !this.contractAddress)
@@ -90,6 +88,7 @@ export class EERC {
         this.contractAddress,
       );
 
+      // deriving the decryption key from the user signature
       const signature = await this.wallet.signMessage({ message });
       const key = getPrivateKeyFromSignature(signature);
       const formatted = formatKeyForCurve(key);
@@ -119,12 +118,13 @@ export class EERC {
       };
 
       const isRegistered = await check();
+
+      // if user already registered return the key
       if (isRegistered) {
         this.decryptionKey = key;
         this.publicKey = publicKey;
         return {
           key,
-          error: "User already registered!",
           transactionHash: "",
         };
       }
@@ -140,7 +140,7 @@ export class EERC {
       this.publicKey = publicKey;
 
       // returns proof for the transaction
-      return { key, error: "", transactionHash };
+      return { key, transactionHash };
     } catch (e) {
       throw new Error(e as string);
     }
@@ -618,17 +618,7 @@ export class EERC {
     return data;
   }
 
-  async fetchUserBalance(userAddress: string, tokenAddress: string) {
-    const data = await this.client.readContract({
-      abi: this.abi,
-      address: this.contractAddress as `0x${string}`,
-      functionName: "balanceOfFromAddress",
-      args: [userAddress as `0x${string}`, tokenAddress as `0x${string}`],
-    });
-
-    return data as EncryptedBalance;
-  }
-
+  // returns the token id from token address
   async tokenId(tokenAddress: string) {
     const data = await this.client.readContract({
       abi: this.abi,
@@ -685,6 +675,7 @@ export class EERC {
       const currentBlock = await this.client.getBlockNumber();
       const events = ERC34_ABI.filter((element) => element.type === "event");
 
+      // get last 50 blocks logs
       const logs = (await this.client.getLogs({
         address: this.contractAddress,
         fromBlock: currentBlock - 50n,

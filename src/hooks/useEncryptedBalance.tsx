@@ -4,6 +4,7 @@ import { type WalletClient, useContractRead } from "wagmi";
 import type { EERC } from "../EERC";
 import { Scalar } from "../crypto/scalar";
 import type { Point } from "../crypto/types";
+import { ERC34_ABI } from "../utils";
 import type { EncryptedBalance } from "./types";
 
 export function useEncryptedBalance(
@@ -20,9 +21,14 @@ export function useEncryptedBalance(
     bigint[]
   >([]);
 
-  const { data: contractBalance } = useContractRead({
+  const eercContract = {
     address: contractAddress as `0x${string}`,
-    abi: eerc?.abi,
+    abi: ERC34_ABI,
+  };
+
+  // get encrypted balance of the user
+  const { data: contractBalance } = useContractRead({
+    ...eercContract,
     functionName: tokenAddress ? "balanceOfFromAddress" : "balanceOf",
     args: [wallet?.account.address, tokenAddress || 0n],
     enabled: !!wallet?.account.address,
@@ -31,8 +37,7 @@ export function useEncryptedBalance(
 
   // auditor public key
   useContractRead({
-    abi: eerc?.abi,
-    address: contractAddress as `0x${string}`,
+    ...eercContract,
     functionName: "getAuditorPublicKey",
     args: [],
     onSuccess: (publicKey) => setAuditorPublicKey(publicKey as bigint[]),
@@ -60,6 +65,7 @@ export function useEncryptedBalance(
     setEncryptedBalance(parsedBalance);
   }, [contractBalance, encryptedBalance]);
 
+  // if encrypted balance is changed or not decrypted yet
   useAsync(async () => {
     if (!encryptedBalance.length || !eerc) return;
 
@@ -78,6 +84,7 @@ export function useEncryptedBalance(
     setIsDecrypting(false);
   }, [encryptedBalance, eerc]);
 
+  // mints amount of encrypted tokens to the user
   const privateMint = useCallback(
     (amount: bigint) => {
       if (!eerc || !auditorPublicKey) return;
@@ -86,6 +93,7 @@ export function useEncryptedBalance(
     [eerc, auditorPublicKey],
   );
 
+  // burns amount of encrypted tokens from the user
   const privateBurn = useCallback(
     (amount: bigint) => {
       if (
@@ -106,6 +114,7 @@ export function useEncryptedBalance(
     [eerc, auditorPublicKey, encryptedBalance, decryptedBalance],
   );
 
+  // transfers amount of encrypted tokens to the user
   const privateTransfer = useCallback(
     (to: string, amount: bigint) => {
       if (
@@ -146,7 +155,6 @@ export function useEncryptedBalance(
     [eerc, tokenAddress],
   );
 
-  // need to change withdraw parameters
   const withdraw = useCallback(
     (amount: bigint) => {
       if (!eerc || !tokenAddress) return;
@@ -162,11 +170,11 @@ export function useEncryptedBalance(
   );
 
   return {
-    decryptedBalance,
-    parsedDecryptedBalance,
-    encryptedBalance,
-    isDecrypting,
-    auditorPublicKey,
+    decryptedBalance, // decrypted balance of the user
+    parsedDecryptedBalance, // parsed decrypted balance of the user
+    encryptedBalance, // encrypted balance of the user
+    isDecrypting: isDecrypting || !decryptedBalance.length, // is decrypting the balance
+    auditorPublicKey, // auditor's public key
 
     // functions
     privateMint,
