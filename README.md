@@ -8,9 +8,9 @@
 </a>
 </p>
 
-<h1 align="center">EERC Sdk</h1>
+<h1 align="center">Encrypted ERC SDK</h1>
 <p align="center">
-  This is an official Ava Labs repo for the EERC SDK.
+  This is an official Ava Labs repo for the eERC SDK.
 </p>
 
 ## Getting Started 🚀
