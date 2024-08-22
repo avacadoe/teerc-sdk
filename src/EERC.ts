@@ -115,12 +115,6 @@ export class EERC {
         pk: publicKey.map(String),
       };
 
-      // proof generated for the transaction
-      const proof = await this.proofGenerator.generateProof(
-        ProofType.REGISTER,
-        input,
-      );
-
       const check = async () => {
         const { publicKey } = (await this.client.readContract({
           address: this.contractAddress,
@@ -135,8 +129,8 @@ export class EERC {
 
       const isRegistered = await check();
 
-      // if user already registered return the key
       if (isRegistered) {
+        // if user already registered return the key
         this.decryptionKey = key;
         this.publicKey = publicKey;
         return {
@@ -144,6 +138,12 @@ export class EERC {
           transactionHash: "",
         };
       }
+
+      // proof generated for the transaction
+      const proof = await this.proofGenerator.generateProof(
+        ProofType.REGISTER,
+        input,
+      );
 
       logMessage("Sending transaction");
       const transactionHash = await this.wallet.writeContract({
@@ -370,6 +370,7 @@ export class EERC {
       throw new Error(
         "Missing client, wallet, contract address or decryption key!",
       );
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
 
     logMessage("Depositing tokens to the contract");
     // check if the user has enough approve amount
@@ -409,6 +410,9 @@ export class EERC {
       throw new Error(
         "Missing client, wallet, contract address or decryption key!",
       );
+
+    // only work if eerc is converter
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
 
     if (amount <= 0n) throw new Error("Invalid amount!");
     if (!encryptedBalance.length || decryptedBalance.length !== 2)
@@ -746,7 +750,7 @@ export class EERC {
         const amount = Scalar.calculate(whole as bigint, fractional as bigint);
         result.push({
           transactionHash: log.transactionHash,
-          amount,
+          amount: Scalar.recalculate(amount).join("."),
           sender: tx.from,
           type: decoded?.functionName as TransactionType,
           receiver:
@@ -756,7 +760,8 @@ export class EERC {
         });
       }
 
-      return result;
+      // reverse the array to get the latest transactions first
+      return result.reverse();
     } catch (e) {
       throw new Error(e as string);
     }

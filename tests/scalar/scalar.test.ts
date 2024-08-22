@@ -1,5 +1,5 @@
 import { Scalar } from "../../src/crypto/scalar";
-import { shiftRightTestCases } from "./scalar.test.cases";
+import { decideCases, shiftRightTestCases } from "./scalar.test.cases";
 
 describe("Scalar", () => {
   test("shiftRight should handle properly", () => {
@@ -22,5 +22,73 @@ describe("Scalar", () => {
 
     const odd = 3n;
     expect(Scalar.isOdd(odd)).toBe(true);
+  });
+
+  test("calculate should handle properly", () => {
+    const whole = 1n;
+    const fractional = 50n;
+    expect(Scalar.calculate(whole, fractional)).toBe(150n);
+
+    const zero = 0n;
+    expect(Scalar.calculate(zero, zero)).toBe(0n);
+  });
+
+  test("adjust should handle properly", () => {
+    const cases = [
+      {
+        whole: 10n,
+        fractional: 50n,
+        expected: [10n, 50n],
+      },
+      {
+        whole: 0n,
+        fractional: 0n,
+        expected: [0n, 0n],
+      },
+      {
+        whole: 1n,
+        fractional: 160n,
+        expected: [2n, 60n],
+      },
+      {
+        whole: 10n,
+        fractional: 10000n,
+        expected: [110n, 0n],
+      }, //  10000 cents = 100 dollars
+    ];
+
+    for (const { whole, fractional, expected } of cases) {
+      expect(Scalar.adjust(whole, fractional)).toEqual(expected);
+    }
+  });
+
+  test("decide should handle properly", () => {
+    for (const c of decideCases) {
+      expect(
+        Scalar.decide(
+          c.input.oldWhole,
+          c.input.oldFractional,
+          c.input.amountWhole,
+          c.input.amountFractional,
+        ),
+      ).toEqual([c.expected.toBeSubtracted, c.expected.toBeAdded]);
+    }
+
+    // insufficient balance
+    const insufficientBalance = {
+      oldWhole: 20n,
+      oldFractional: 10n,
+      amountWhole: 20n,
+      amountFractional: 20n,
+    };
+
+    expect(() => {
+      Scalar.decide(
+        insufficientBalance.oldWhole,
+        insufficientBalance.oldFractional,
+        insufficientBalance.amountWhole,
+        insufficientBalance.amountFractional,
+      );
+    }).toThrow("Insufficient balance!");
   });
 });
