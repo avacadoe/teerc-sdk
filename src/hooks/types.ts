@@ -42,6 +42,8 @@ export type EERCHookResult = {
   isAuditorKeySet: boolean;
   name: string;
   symbol: string;
+  shouldGenerateDecryptionKey: boolean;
+  generateDecryptionKey: () => Promise<string>;
   register: () => Promise<{ key: string; transactionHash: string }>;
   setAuditor: (publicKey: Point) => Promise<`0x${string}`>;
   setMyselfAsAuditor: () => Promise<`0x${string}`>;
@@ -56,7 +58,7 @@ export type EERCHookResult = {
 
 export type UseEncryptedBalanceHookResult = {
   decryptedBalance: bigint[];
-  parsedDecryptedBalance: bigint[];
+  parsedDecryptedBalance: string[];
   encryptedBalance: bigint[];
   isDecrypting: boolean;
   auditorPublicKey: bigint[];
