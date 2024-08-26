@@ -9,11 +9,7 @@ import { Poseidon } from "./crypto/poseidon";
 import { Scalar } from "./crypto/scalar";
 import type { Point } from "./crypto/types";
 import { ProofGenerator, ProofType, logMessage } from "./helpers";
-import {
-  type DecryptedTransaction,
-  type OperationResult,
-  TransactionType,
-} from "./hooks/types";
+import type { DecryptedTransaction, OperationResult } from "./hooks/types";
 import { ERC34_ABI, MESSAGES, SNARK_FIELD_SIZE } from "./utils";
 import { REGISTRAR_ABI } from "./utils/Registrar.abi";
 
@@ -623,8 +619,6 @@ export class EERC {
         auditorEncKey: encryptionKey.map(String),
       };
 
-      console.log(JSON.stringify(input, null, 2));
-
       const proof = await this.proofGenerator.generateProof(
         ProofType.TRANSFER,
         input,
@@ -729,6 +723,7 @@ export class EERC {
     const result: DecryptedTransaction[] = [];
 
     try {
+      logMessage("Fetching logs...");
       const currentBlock = await this.client.getBlockNumber();
       const events = ERC34_ABI.filter((element) => element.type === "event");
 
@@ -739,6 +734,8 @@ export class EERC {
         toBlock: currentBlock,
         events,
       })) as NamedEvents[];
+
+      logMessage(`Fetched ${logs.length} logs from the contract`);
 
       for (const log of logs) {
         if (!log.transactionHash) return [];
@@ -768,17 +765,25 @@ export class EERC {
         });
 
         const amount = Scalar.calculate(whole as bigint, fractional as bigint);
+
         result.push({
           transactionHash: log.transactionHash,
-          amount: Scalar.recalculate(amount).join("."),
+          amount: Scalar.parseEERCBalance(amount),
           sender: tx.from,
-          type: decoded?.functionName as TransactionType,
+          type:
+            decoded?.functionName === "privateMint"
+              ? "Mint"
+              : decoded?.functionName === "privateBurn"
+                ? "Burn"
+                : "Transfer",
           receiver:
-            decoded?.functionName === TransactionType.TRANSFER
+            decoded?.functionName === "transfer"
               ? (decoded?.args?.[0] as `0x${string}`) ?? null
               : null,
         });
       }
+
+      logMessage(`Transactions decrypted: ${result.length}`);
 
       // reverse the array to get the latest transactions first
       return result.reverse();
