@@ -7,9 +7,9 @@ import {
   useContractReads,
 } from "wagmi";
 import { EERC } from "../EERC";
-import type { Point } from "../crypto/types";
 import { logMessage } from "../helpers";
 import { ERC34_ABI } from "../utils";
+import { useProver } from "../wasm";
 import type { DecryptedTransaction, EERCHookResult } from "./types";
 import { useEncryptedBalance } from "./useEncryptedBalance";
 
@@ -18,6 +18,7 @@ export function useEERC(
   wallet: WalletClient,
   contractAddress: string,
   tableUrl: string,
+  wasmUrl: string,
   decryptionKey?: string,
 ): EERCHookResult {
   const eercContract = useMemo(
@@ -43,8 +44,17 @@ export function useEERC(
   // flag for all data fetched
   const [isAllDataFetched, setIsAllDataFetched] = useState<boolean>(false);
 
+  // use prover
+  const { prove } = useProver({
+    url: wasmUrl.startsWith("/") ? `${location.origin}/prover.wasm` : wasmUrl,
+  });
+
   // get user data for checking is user registered
-  const { data: userData, isFetched: isUserDataFetched } = useContractRead({
+  const {
+    data: userData,
+    isFetched: isUserDataFetched,
+    refetch: refetchEercUser,
+  } = useContractRead({
     ...eercContract,
     functionName: "getUser",
     args: [wallet?.account?.address],
@@ -76,14 +86,17 @@ export function useEERC(
       ],
     });
 
-  const { data: auditorPublicKeyData, isFetched: isAuditorPublicKeyFetched } =
-    useContractRead({
-      ...eercContract,
-      functionName: "getAuditorPublicKey",
-      args: [],
-      enabled: Boolean(contractAddress),
-      watch: true,
-    });
+  const {
+    data: auditorPublicKeyData,
+    isFetched: isAuditorPublicKeyFetched,
+    refetch: refetchAuditor,
+  } = useContractRead({
+    ...eercContract,
+    functionName: "getAuditorPublicKey",
+    args: [],
+    enabled: Boolean(contractAddress),
+    watch: true,
+  });
 
   // update auditor public key
   useEffect(() => {
@@ -135,13 +148,16 @@ export function useEERC(
   }, [isUserDataFetched, isContractDataFetched, isAuditorPublicKeyFetched]);
 
   useEffect(() => {
+    // Check if the required data is ready before initializing
     if (
       !!client &&
       !!wallet?.account.address &&
       !!contractAddress &&
       isConverter !== undefined &&
-      registrarAddress.length &&
-      !!tableUrl
+      registrarAddress.length > 0 &&
+      !!tableUrl &&
+      !!prove &&
+      !isInitialized
     ) {
       const _eerc = new EERC(
         client,
@@ -150,6 +166,7 @@ export function useEERC(
         registrarAddress as `0x${string}`,
         isConverter as boolean,
         tableUrl,
+        prove,
         decryptionKey,
       );
 
@@ -164,9 +181,12 @@ export function useEERC(
         });
     }
 
+    // Cleanup function to reset state only when necessary
     return () => {
-      setEERC(undefined);
-      setIsInitialized(false);
+      if (isInitialized) {
+        setEERC(undefined);
+        setIsInitialized(false);
+      }
     };
   }, [
     client,
@@ -176,9 +196,9 @@ export function useEERC(
     registrarAddress,
     decryptionKey,
     tableUrl,
+    prove,
+    isInitialized,
   ]);
-
-  // should generate the key
   const shouldGenerateDecryptionKey = useMemo(() => {
     if (!eerc) {
       return false;
@@ -186,39 +206,6 @@ export function useEERC(
 
     return isRegistered && !eerc?.isDecryptionKeySet;
   }, [eerc, isRegistered]);
-
-  // sets auditor public key
-  const setAuditor = useCallback(
-    async (publicKey: Point): Promise<`0x${string}`> => {
-      try {
-        if (!wallet || !contractAddress) {
-          throw new Error("EERC not initialized");
-        }
-        logMessage(`Setting auditor public key: ${publicKey}`);
-        const transactionHash = await wallet?.writeContract({
-          address: contractAddress as `0x${string}`,
-          abi: ERC34_ABI,
-          functionName: "setAuditorPublicKey",
-          args: [publicKey],
-        });
-
-        // update auditor public key
-        setAuditorPublicKey([publicKey[0], publicKey[1]]);
-
-        return transactionHash;
-      } catch (error) {
-        throw new Error(error as string);
-      }
-    },
-    [wallet, contractAddress],
-  );
-
-  // sets auditor public key as user's public key
-  const setMyselfAsAuditor = useCallback(async () => {
-    if (!eerc?.publicKey)
-      throw new Error("EERC not initialized or public key not available");
-    return setAuditor(eerc?.publicKey as Point);
-  }, [eerc?.publicKey, setAuditor]);
 
   // registers the user to the EERC contract
   const register = useCallback(() => {
@@ -300,13 +287,16 @@ export function useEERC(
 
     // functions
     register, // register user to the contract
-    setAuditor, // set auditor public key
-    setMyselfAsAuditor, // set user's public key as auditor's public key
     auditorDecrypt, // auditor decryption
     isAddressRegistered, // function for checking address is registered or not
     generateDecryptionKey, // generate decryption key
 
+    // refetch
+    refetchEercUser,
+    refetchAuditor,
+
     // hooks
     useEncryptedBalance: useEncryptedBalanceHook,
+    prove,
   };
 }

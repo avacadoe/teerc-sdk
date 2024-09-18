@@ -1,4 +1,4 @@
-import type { Point } from "../crypto/types";
+import type { IWasmProof } from "../helpers";
 import type { useEncryptedBalance } from "./useEncryptedBalance";
 
 export type EncryptedBalance = [ContractCipher, ContractCipher];
@@ -25,6 +25,11 @@ export type DecryptedTransaction = {
   transactionHash: `0x${string}`;
 };
 
+export type IProveFunction = (
+  data: string,
+  proofType: "REGISTER" | "MINT" | "BURN" | "TRANSFER",
+) => Promise<IWasmProof>;
+
 export type EERCHookResult = {
   isInitialized: boolean;
   isAllDataFetched: boolean;
@@ -39,8 +44,6 @@ export type EERCHookResult = {
   areYouAuditor: boolean;
   generateDecryptionKey: () => Promise<string>;
   register: () => Promise<{ key: string; transactionHash: string }>;
-  setAuditor: (publicKey: Point) => Promise<`0x${string}`>;
-  setMyselfAsAuditor: () => Promise<`0x${string}`>;
   auditorDecrypt: () => Promise<DecryptedTransaction[]>;
   isAddressRegistered: (
     address: `0x${string}`,
@@ -48,6 +51,9 @@ export type EERCHookResult = {
   useEncryptedBalance: (
     tokenAddress?: `0x${string}`,
   ) => ReturnType<typeof useEncryptedBalance>;
+  prove: IProveFunction;
+  refetchEercUser: () => void;
+  refetchAuditor: () => void;
 };
 
 export type UseEncryptedBalanceHookResult = {
@@ -55,9 +61,13 @@ export type UseEncryptedBalanceHookResult = {
   parsedDecryptedBalance: string;
   encryptedBalance: bigint[];
   auditorPublicKey: bigint[];
-  privateMint: (amount: bigint) => Promise<OperationResult>;
+  privateMint: (
+    recipient: `0x${string}`,
+    amount: bigint,
+  ) => Promise<OperationResult>;
   privateBurn: (amount: bigint) => Promise<OperationResult>;
   privateTransfer: (to: string, amount: bigint) => Promise<OperationResult>;
   withdraw: (amount: bigint) => Promise<OperationResult>;
   deposit: (amount: bigint) => Promise<OperationResult>;
+  refetchBalance: () => void;
 };
