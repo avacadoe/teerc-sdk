@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { type IWasmProof, logMessage } from "../helpers";
+import { type IProof, logMessage } from "../helpers";
 import { wasmExecBase64 } from "./worker";
 
 type useProverProps = {
@@ -21,42 +21,24 @@ export const useProver = ({ url }: useProverProps) => {
         const { wasmUrl, funcArgs, proofType } = e.data;
 
         try {
-          // Initialize a new Go runtime for every proof generation
           const go = new Go();
           let wasm = null;
 
           // Check if Wasm is already instantiated and cached
           if ('instantiateStreaming' in WebAssembly) {
-            const rr = await WebAssembly.instantiateStreaming(fetch(wasmUrl), go.importObject);
-            wasm = rr.instance;
+            const result = await WebAssembly.instantiateStreaming(fetch(wasmUrl), go.importObject);
+            wasm = result.instance;
           } else {
             const resp = await fetch(wasmUrl);
             const bytes = await resp.arrayBuffer();
-            const rr = await WebAssembly.instantiate(bytes, go.importObject);
-            wasm = rr.instance;
+            const result = await WebAssembly.instantiate(bytes, go.importObject);
+            wasm = result.instance;
           }
 
           go.run(wasm);
+          const proof = generateProof(proofType, funcArgs);
+          self.postMessage(proof);
 
-          let result;
-          switch (proofType) {
-            case 'REGISTER':
-              result = generateRegisterProof(funcArgs);
-              break;
-            case 'MINT':
-              result = generateMintProof(funcArgs);
-              break;
-            case 'BURN':
-              result = generateBurnProof(funcArgs);
-              break;
-            case 'TRANSFER':
-              result = generateTransferProof(funcArgs);
-              break;
-            default:
-              throw new Error('Invalid proof type');
-          }
-
-          self.postMessage(result);
         } catch (error) {
           console.log('Error:', error);
           self.postMessage({ error: "Error generating proof" });
@@ -82,12 +64,17 @@ export const useProver = ({ url }: useProverProps) => {
     };
   }, []);
 
-  // Memoize the prove function using useCallback
+  /**
+   * generate proof by using the wasm module
+   * @param data - data to generate proof
+   * @param proofType - proof type
+   * @returns proof
+   */
   const prove = useCallback(
     async (
       data: string,
-      proofType: "REGISTER" | "MINT" | "BURN" | "TRANSFER",
-    ): Promise<IWasmProof> => {
+      proofType: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+    ): Promise<IProof> => {
       if (!workerRef.current) {
         throw new Error("Worker not initialized");
       }
@@ -106,7 +93,7 @@ export const useProver = ({ url }: useProverProps) => {
           if (event.data.error) {
             reject(new Error(event.data.error));
           } else {
-            resolve(JSON.parse(event.data) as IWasmProof);
+            resolve(JSON.parse(event.data) as IProof);
           }
 
           // Remove the event listener after the message is received

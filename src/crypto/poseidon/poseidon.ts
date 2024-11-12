@@ -18,7 +18,11 @@ export class Poseidon {
     );
   }
 
-  // wrapper for poseidon encryption process
+  /**
+   * process poseidon encryption with the given inputs and public key
+   * @param params parameters (inputs : bigint[], publicKey : Point)
+   * @returns {cipher : bigint[], nonce : bigint, encryptionRandom : bigint, authKey : Point, encryptionKey : Point}
+   */
   async processPoseidonEncryption(params: {
     inputs: bigint[];
     publicKey: Point;
@@ -28,7 +32,6 @@ export class Poseidon {
     const encryptionRandom =
       (await BabyJub.generateRandomValue()) % BigInt(2 ** 253);
     const encryptionKey = this.curve.mulWithScalar(publicKey, encryptionRandom);
-
     const cipher = this.poseidonEncrypt(inputs, encryptionKey, poseidonNonce);
 
     const poseidonAuthKey = this.curve.mulWithScalar(
@@ -45,7 +48,11 @@ export class Poseidon {
     };
   }
 
-  // wrapper for poseidon decryption process
+  /**
+   * process poseidon decryption with the given parameters
+   * @param params parameters (privateKey : bigint, authKey : Point, cipher : bigint[], nonce : bigint, length : number)
+   * @returns decrypted message
+   */
   processPoseidonDecryption(params: {
     privateKey: bigint;
     authKey: Point;
@@ -59,7 +66,9 @@ export class Poseidon {
     return decrypted;
   }
 
-  // poseidon permutation
+  /**
+   * poseidon permutation
+   */
   private poseidonPerm(ss: bigint[]): bigint[] {
     if (ss.length > this.N_ROUNDS_P.length)
       throw new Error("Invalid poseidon state");
@@ -91,7 +100,9 @@ export class Poseidon {
     return state.map((e) => this.field.normalize(e));
   }
 
-  // poseidon encryption
+  /**
+   * poseidon encryption
+   */
   private poseidonEncrypt(
     inputs: bigint[],
     key: Point,
@@ -144,7 +155,9 @@ export class Poseidon {
     return ciphertext;
   }
 
-  // poseidon decryption
+  /**
+   * poseidon decryption
+   */
   private poseidonDecrypt(
     cipher: bigint[],
     sharedKey: Point,
