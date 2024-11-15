@@ -1,6 +1,6 @@
 {
   "name": "@avalabs/ac-eerc-sdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -46,7 +46,7 @@
     "tiny-msgpack": "^2.2.0",
     "xxhash-wasm": "^1.0.2"
   },
-  "description": "",
+  "description": "SDK for the Encrypted ERC",
   "directories": {
     "test": "tests"
   },
