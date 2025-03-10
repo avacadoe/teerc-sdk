@@ -1,6 +1,6 @@
 import createBlakeHash from "blake-hash";
 import { sha256 } from "js-sha256";
-import { SHA_256_MAX_DIGEST, SNARK_FIELD_SIZE } from "../utils";
+import { SHA_256_MAX_DIGEST, SUB_GROUP_ORDER } from "../utils";
 import { Scalar } from "./scalar";
 
 /**
@@ -43,7 +43,8 @@ export const getPrivateKeyFromSignature = (signature: string): string => {
 };
 
 export const grindKey = (seed: string): string => {
-  const limit = SNARK_FIELD_SIZE;
+  const limit = SUB_GROUP_ORDER;
+  const iterationLimit = 1_000;
   const maxAllowedValue = SHA_256_MAX_DIGEST - (SHA_256_MAX_DIGEST % limit);
 
   let i = 0;
@@ -54,6 +55,10 @@ export const grindKey = (seed: string): string => {
   while (key >= maxAllowedValue) {
     key = hashKeyWithIndex(seed, i);
     i++;
+
+    if (i > iterationLimit) {
+      throw new Error("Could not find a valid key");
+    }
   }
 
   return (key % limit).toString(16);
