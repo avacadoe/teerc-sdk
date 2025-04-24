@@ -109,4 +109,33 @@ export interface IEERCState {
     isChecking: boolean;
     isAuditor: boolean;
   };
+  snarkjsMode: boolean;
 }
+
+export type CircuitURLs = {
+  register: {
+    wasm: string;
+    zkey: string;
+  };
+  transfer: {
+    wasm: string;
+    zkey: string;
+  };
+  mint: {
+    wasm: string;
+    zkey: string;
+  };
+  withdraw: {
+    wasm: string;
+    zkey: string;
+  };
+};
+
+export type eERC_Proof = {
+  proofPoints: {
+    a: string[];
+    b: string[][];
+    c: string[];
+  };
+  publicSignals: string[];
+};

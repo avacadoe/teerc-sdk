@@ -12,7 +12,12 @@ import { logMessage } from "../helpers";
 import { ENCRYPTED_ERC_ABI } from "../utils";
 import { REGISTRAR_ABI } from "../utils/Registrar.abi";
 import { useProver } from "../wasm";
-import type { DecryptedTransaction, EERCHookResult, IEERCState } from "./types";
+import type {
+  CircuitURLs,
+  DecryptedTransaction,
+  EERCHookResult,
+  IEERCState,
+} from "./types";
 import { useEncryptedBalance } from "./useEncryptedBalance";
 
 export function useEERC(
@@ -23,6 +28,7 @@ export function useEERC(
     transferURL: string;
     multiWasmURL: string;
   },
+  circuitURLs: CircuitURLs,
   decryptionKey?: string,
 ): EERCHookResult {
   const [eerc, setEerc] = useState<EERC | undefined>(undefined);
@@ -40,6 +46,7 @@ export function useEERC(
       isChecking: false,
       isAuditor: false,
     },
+    snarkjsMode: true,
   });
   const [generatedDecryptionKey, setGeneratedDecryptionKey] =
     useState<string>();
@@ -50,7 +57,32 @@ export function useEERC(
     [],
   );
 
-  // use prover
+  // Function to check bytecode and set snarkjsMode
+  useEffect(() => {
+    const checkBytecode = async () => {
+      if (!client || !contractAddress) return;
+
+      try {
+        const bytecode = await client.getBytecode({
+          address: contractAddress as `0x${string}`,
+        });
+
+        if (bytecode) {
+          const shouldUseSnarkJs = bytecode.includes("a509711610");
+
+          updateEercState({ snarkjsMode: shouldUseSnarkJs });
+          logMessage(
+            `Contract bytecode checked. Setting snarkjsMode to: ${shouldUseSnarkJs}`,
+          );
+        }
+      } catch (error) {
+        logMessage(`Failed to check bytecode: ${error}`);
+      }
+    };
+
+    checkBytecode();
+  }, [client, contractAddress, updateEercState]);
+
   const { prove } = useProver({
     transferURL: urls.transferURL.startsWith("/")
       ? `${location.origin}/${urls.transferURL}`
@@ -75,6 +107,10 @@ export function useEERC(
     }),
     [eercState.registrarAddress],
   );
+
+  const circuitURLsKey = useMemo(() => {
+    return JSON.stringify(circuitURLs);
+  }, [circuitURLs]);
 
   /**
    * get user data for checking is user registered
@@ -260,6 +296,7 @@ export function useEERC(
     setGeneratedDecryptionKey("");
   }, [wallet?.account?.address]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: circuitURLsKey is a stable key for circuitURLs
   useEffect(() => {
     let mounted = true;
 
@@ -270,8 +307,8 @@ export function useEERC(
         !contractAddress ||
         eercState.isConverter === undefined ||
         !eercState.registrarAddress ||
-        !prove ||
-        eercState.isInitialized
+        eercState.isInitialized ||
+        !circuitURLs
       )
         return;
 
@@ -280,6 +317,7 @@ export function useEERC(
         if (!correctKey) {
           logMessage("Decryption key is not set");
         }
+
         const _eerc = new EERC(
           client,
           wallet,
@@ -287,8 +325,12 @@ export function useEERC(
           eercState.registrarAddress as `0x${string}`,
           eercState.isConverter,
           prove,
+          circuitURLs,
           correctKey,
         );
+
+        _eerc.snarkjsMode = eercState.snarkjsMode;
+        logMessage(`Using snarkjsMode: ${eercState.snarkjsMode}`);
 
         if (mounted) {
           setEerc(_eerc);
@@ -320,10 +362,12 @@ export function useEERC(
     eercState.isConverter,
     eercState.registrarAddress,
     decryptionKey,
-    prove,
     eercState.isInitialized,
     updateEercState,
     generatedDecryptionKey,
+    circuitURLsKey,
+    prove,
+    eercState.snarkjsMode, // Add snarkjsMode to dependencies
   ]);
 
   /**
