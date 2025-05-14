@@ -11,6 +11,8 @@ import { type IProof, logMessage } from "./helpers";
 import type {
   CircuitURLs,
   DecryptedTransaction,
+  EERCOperation,
+  EERCOperationGnark,
   IProveFunction,
   OperationResult,
   eERC_Proof,
@@ -52,7 +54,7 @@ export class EERC {
 
   public proveFunc: (
     data: string,
-    proofType: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+    proofType: EERCOperationGnark,
   ) => Promise<IProof>;
 
   public snarkjsMode: boolean;
@@ -342,27 +344,61 @@ export class EERC {
     this.validateAmount(amount, decryptedBalance);
     logMessage("Burning encrypted tokens");
 
-    const { proof, senderBalancePCT } = await this.generateTransferProof(
-      BURN_USER.address,
+    const privateKey = formatKeyForCurve(this.decryptionKey);
+
+    // encrypt the amount with the user public key
+    const { cipher: encryptedAmount } = await this.curve.encryptMessage(
+      this.publicKey as Point,
       amount,
-      encryptedBalance,
-      decryptedBalance,
-      auditorPublicKey,
     );
+
+    // create pct for the auditor
+    const {
+      cipher: auditorCiphertext,
+      nonce: auditorPoseidonNonce,
+      authKey: auditorAuthKey,
+      encryptionRandom: auditorEncryptionRandom,
+    } = await this.poseidon.processPoseidonEncryption({
+      inputs: [amount],
+      publicKey: auditorPublicKey as Point,
+    });
+
+    const senderNewBalance = decryptedBalance - amount;
+    const {
+      cipher: userCiphertext,
+      nonce: userPoseidonNonce,
+      authKey: userAuthKey,
+    } = await this.poseidon.processPoseidonEncryption({
+      inputs: [senderNewBalance],
+      publicKey: this.publicKey as Point,
+    });
+
+    // prepare circuit inputs
+    const input = {
+      ValueToBurn: amount,
+      SenderPrivateKey: privateKey,
+      SenderPublicKey: this.publicKey,
+      SenderBalance: decryptedBalance,
+      SenderBalanceC1: encryptedBalance.slice(0, 2),
+      SenderBalanceC2: encryptedBalance.slice(2, 4),
+      SenderVTBC1: encryptedAmount.c1,
+      SenderVTBC2: encryptedAmount.c2,
+      AuditorPublicKey: auditorPublicKey,
+      AuditorPCT: auditorCiphertext,
+      AuditorPCTAuthKey: auditorAuthKey,
+      AuditorPCTNonce: auditorPoseidonNonce,
+      AuditorPCTRandom: auditorEncryptionRandom,
+    };
+
+    const proof = await this.generateProof(input, "BURN");
 
     logMessage("Sending transaction");
 
     const transactionHash = await this.wallet.writeContract({
-      abi: this.snarkjsMode ? this.encryptedErcAbi : this.legacyEncryptedErcAbi,
+      abi: this.encryptedErcAbi,
       address: this.contractAddress,
       functionName: "privateBurn",
-      args: this.snarkjsMode
-        ? [proof, senderBalancePCT]
-        : [
-            (proof as IProof).proof,
-            (proof as IProof).publicInputs,
-            senderBalancePCT,
-          ],
+      args: [proof, [...userCiphertext, ...userAuthKey, userPoseidonNonce]],
     });
 
     return { transactionHash };
@@ -1025,20 +1061,32 @@ export class EERC {
   private async generateProof(
     // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     input: any,
-    operation: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+    operation: EERCOperation,
   ): Promise<eERC_Proof | IProof> {
     logMessage("Generating proof function");
+
+    if (operation === "BURN" && !this.snarkjsMode) {
+      throw new Error(
+        "BURN operation is only available in snarkjsMode because of security reasons",
+      );
+    }
+
     if (this.snarkjsMode) {
       return this.generateSnarkjsProof(input, operation);
     }
 
-    const extractedInputs = this.extractSnarkJsInputsToGnark(input, operation);
+    const extractedInputs = this.extractSnarkJsInputsToGnark(
+      input,
+      operation as EERCOperationGnark,
+    );
     const proof = await this.proveFunc(
       JSON.stringify(extractedInputs),
-      operation,
+      operation as EERCOperationGnark,
     );
 
-    proof.publicInputs = extractedInputs.publicInputs;
+    if (extractedInputs) {
+      proof.publicInputs = extractedInputs.publicInputs;
+    }
 
     return proof;
   }
@@ -1046,7 +1094,7 @@ export class EERC {
   private async generateSnarkjsProof(
     // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     input: any,
-    operation: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+    operation: EERCOperation,
   ): Promise<eERC_Proof> {
     let wasm: string;
     let zkey: string;
@@ -1067,6 +1115,10 @@ export class EERC {
       case "TRANSFER":
         wasm = this.circuitURLs.transfer.wasm;
         zkey = this.circuitURLs.transfer.zkey;
+        break;
+      case "BURN":
+        wasm = this.circuitURLs.burn.wasm;
+        zkey = this.circuitURLs.burn.zkey;
         break;
       default:
         throw new Error("Invalid operation");
@@ -1114,7 +1166,7 @@ export class EERC {
   private extractSnarkJsInputsToGnark(
     // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     input: any,
-    operation: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+    operation: EERCOperationGnark,
   ) {
     switch (operation) {
       case "REGISTER":

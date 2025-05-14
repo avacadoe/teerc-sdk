@@ -27,8 +27,17 @@ export type DecryptedTransaction = {
 
 export type IProveFunction = (
   data: string,
-  proofType: "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER",
+  proofType: EERCOperationGnark,
 ) => Promise<IProof>;
+
+export type EERCOperation =
+  | "REGISTER"
+  | "MINT"
+  | "WITHDRAW"
+  | "TRANSFER"
+  | "BURN";
+
+export type EERCOperationGnark = "REGISTER" | "MINT" | "WITHDRAW" | "TRANSFER";
 
 export type EERCHookResult = {
   isInitialized: boolean;
@@ -126,6 +135,10 @@ export type CircuitURLs = {
     zkey: string;
   };
   withdraw: {
+    wasm: string;
+    zkey: string;
+  };
+  burn: {
     wasm: string;
     zkey: string;
   };
