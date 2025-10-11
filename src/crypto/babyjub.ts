@@ -241,6 +241,22 @@ export class BabyJub {
     console.log('[encryptBytes START] publicKey[0]:', publicKey[0]);
     console.log('[encryptBytes START] publicKey[1]:', publicKey[1]);
 
+    // Validate inputs to avoid mixing undefined with BigInt ops
+    if (!publicKey || publicKey[0] == null || publicKey[1] == null) {
+      throw new Error('Invalid public key passed to encryptBytes. Expected [bigint, bigint] but got null/undefined');
+    }
+    if (typeof publicKey[0] !== 'bigint' || typeof publicKey[1] !== 'bigint') {
+      throw new Error('Invalid public key passed to encryptBytes. Expected [bigint, bigint]');
+    }
+    if (!(message instanceof Uint8Array)) {
+      throw new Error('encryptBytes expects message as Uint8Array');
+    }
+
+    // CRITICAL FIX: Create defensive copy to prevent mutations
+    // mulWithScalar modifies the input array reference during operations
+  const publicKeyCopy: Point = [publicKey[0], publicKey[1]];
+    console.log('[encryptBytes] Created defensive copy:', publicKeyCopy);
+
     // Generate ephemeral key pair
     const ephemeralPrivateKey = await BabyJub.generateRandomValue();
     console.log('[encryptBytes] ephemeralPrivateKey generated:', ephemeralPrivateKey);
@@ -248,12 +264,12 @@ export class BabyJub {
     const ephemeralPublicKey = this.mulWithScalar(this.Base8, ephemeralPrivateKey);
     console.log('[encryptBytes] ephemeralPublicKey computed:', ephemeralPublicKey);
 
-    console.log('[encryptBytes] About to compute sharedSecret with publicKey:', publicKey);
-    console.log('[encryptBytes] publicKey[0] before sharedSecret:', publicKey[0]);
-    console.log('[encryptBytes] publicKey[1] before sharedSecret:', publicKey[1]);
+    console.log('[encryptBytes] About to compute sharedSecret with publicKeyCopy:', publicKeyCopy);
+    console.log('[encryptBytes] publicKeyCopy[0] before sharedSecret:', publicKeyCopy[0]);
+    console.log('[encryptBytes] publicKeyCopy[1] before sharedSecret:', publicKeyCopy[1]);
 
     // Compute shared secret: S = ephemeralPrivateKey * publicKey
-    const sharedSecret = this.mulWithScalar(publicKey, ephemeralPrivateKey);
+  const sharedSecret = this.mulWithScalar(publicKeyCopy, ephemeralPrivateKey);
 
     // Use x-coordinate of shared secret as encryption key
     const keyBytes = this.bigintToBytes(sharedSecret[0]);

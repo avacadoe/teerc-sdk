@@ -1,6 +1,6 @@
 import { poseidon3, poseidon5 } from "poseidon-lite";
 import * as snarkjs from "snarkjs";
-import { type Log, type PublicClient, type WalletClient, decodeFunctionData, isAddress, erc20Abi } from "viem";
+import { type Log, type PublicClient, type WalletClient, decodeFunctionData, isAddress, erc20Abi, keccak256, concat } from "viem";
 import { BabyJub } from "./crypto/babyjub";
 import { FF } from "./crypto/ff";
 import { formatKeyForCurve, getPrivateKeyFromSignature } from "./crypto/key";
@@ -47,7 +47,7 @@ export class EERC {
   public legacyRegistrarAbi = LEGACY_REGISTRAR_ABI;
 
   private decryptionKey: string;
-  public publicKey: bigint[] = [];
+  public publicKey: Point | null = null;
 
   public circuitURLs: CircuitURLs;
 
@@ -157,10 +157,10 @@ export class EERC {
       const signature = await this.wallet.signMessage({ message, account: this.wallet.account! });
       const key = getPrivateKeyFromSignature(signature);
 
-      this.decryptionKey = key;
+  this.decryptionKey = key;
 
-      const formatted = formatKeyForCurve(this.decryptionKey);
-      this.publicKey = this.curve.generatePublicKey(formatted);
+  const formatted = formatKeyForCurve(this.decryptionKey);
+  this.publicKey = this.curve.generatePublicKey(formatted);
 
       return key;
     } catch (error) {
@@ -233,8 +233,8 @@ export class EERC {
         chain: this.wallet.chain,
       });
 
-      this.decryptionKey = key;
-      this.publicKey = publicKey;
+  this.decryptionKey = key;
+  this.publicKey = publicKey;
 
       // returns proof for the transaction
       return { key, transactionHash };
@@ -912,13 +912,19 @@ export class EERC {
   ): Promise<{ userProof: `0x${string}`; auditorProof: `0x${string}` }> {
     if (!this.wallet.account) throw new Error("Missing wallet account!");
 
-    console.log('[SDK generateEncryptedProof] this.publicKey:', this.publicKey);
-    console.log('[SDK generateEncryptedProof] this.publicKey type:', typeof this.publicKey);
-    console.log('[SDK generateEncryptedProof] this.publicKey is array:', Array.isArray(this.publicKey));
-    if (Array.isArray(this.publicKey)) {
-      console.log('[SDK generateEncryptedProof] publicKey[0]:', this.publicKey[0], typeof this.publicKey[0]);
-      console.log('[SDK generateEncryptedProof] publicKey[1]:', this.publicKey[1], typeof this.publicKey[1]);
+    // Derive a fresh public key from the stored decryption key to avoid any runtime mutations
+    if (!this.decryptionKey) {
+      throw new Error("Missing decryption key; call generateDecryptionKey() first.");
     }
+    const formattedSk = formatKeyForCurve(this.decryptionKey);
+    const localPublicKey = this.curve.generatePublicKey(formattedSk);
+    if (
+      typeof localPublicKey[0] !== "bigint" ||
+      typeof localPublicKey[1] !== "bigint"
+    ) {
+      throw new Error("Derived public key is invalid");
+    }
+  console.log('[SDK generateEncryptedProof] using derived user publicKey:', localPublicKey);
 
     // Create proof message
     const proofMessage = {
@@ -934,13 +940,11 @@ export class EERC {
       JSON.stringify(proofMessage),
     );
 
-    console.log('[SDK] About to call encryptBytes with publicKey:', this.publicKey);
+  console.log('[SDK] About to call encryptBytes with publicKey:', this.publicKey);
 
     // Encrypt with user's own public key
-    const userEncrypted = await this.curve.encryptBytes(
-      this.publicKey as Point,
-      messageBytes,
-    );
+  console.log('[SDK generateEncryptedProof] calling encryptBytes for user with key:', localPublicKey);
+  const userEncrypted = await this.curve.encryptBytes(localPublicKey, messageBytes);
 
     // Get auditor public key (Point struct)
     const auditorPubKeyStruct = await this.client.readContract({
@@ -949,13 +953,28 @@ export class EERC {
       functionName: "auditorPublicKey",
     });
 
-    // Extract x and y from Point struct
-    const auditorPubKey = [
-      (auditorPubKeyStruct as { x: bigint; y: bigint }).x,
-      (auditorPubKeyStruct as { x: bigint; y: bigint }).y,
-    ];
+    // Extract x and y from Point struct (viem returns as array)
+    let auditorPubKey: bigint[];
+    if (Array.isArray(auditorPubKeyStruct) && auditorPubKeyStruct.length === 2) {
+      auditorPubKey = [BigInt(auditorPubKeyStruct[0]), BigInt(auditorPubKeyStruct[1])];
+    } else if (auditorPubKeyStruct && typeof auditorPubKeyStruct === 'object') {
+      const struct = auditorPubKeyStruct as { x?: bigint; y?: bigint };
+      if (struct.x !== undefined && struct.y !== undefined) {
+        auditorPubKey = [BigInt(struct.x), BigInt(struct.y)];
+      } else {
+        throw new Error('Invalid auditor public key structure from contract');
+      }
+    } else {
+      throw new Error('Could not extract auditor public key from contract response');
+    }
+
+    if (auditorPubKey[0] === 0n && auditorPubKey[1] === 0n) {
+      throw new Error('Auditor public key not set on contract');
+    }
 
     // Encrypt with auditor's public key
+    console.log('[SDK generateEncryptedProof] using auditor publicKey:', auditorPubKey);
+    console.log('[SDK generateEncryptedProof] calling encryptBytes for auditor with key:', auditorPubKey);
     const auditorEncrypted = await this.curve.encryptBytes(
       auditorPubKey as Point,
       messageBytes,
@@ -991,15 +1010,8 @@ export class EERC {
       // Get EIP-712 domain
       const domain = await this.getEIP712Domain();
 
-      // Hash the proofs (matching Solidity logic)
-      const proofHash = await this.client.request({
-        method: "eth_call",
-        params: [
-          {
-            data: `0x${userProof.slice(2)}${auditorProof.slice(2)}`,
-          },
-        ],
-      });
+      // Hash the proofs (matching Solidity logic: keccak256(abi.encodePacked(userProof, auditorProof)))
+      const proofHash = keccak256(concat([userProof, auditorProof]));
 
       // Define types for WithdrawMetadataAuthorization
       const types = {
@@ -1223,9 +1235,14 @@ export class EERC {
         if (args && args.messageType === "WITHDRAW_SELF" && args.encryptedMsg) {
           try {
             // Decrypt the message
-            const encryptedBytes = Buffer.from(
+            const encryptedBuf = Buffer.from(
               (args.encryptedMsg as string).slice(2),
               "hex",
+            );
+            const encryptedBytes = new Uint8Array(
+              encryptedBuf.buffer,
+              encryptedBuf.byteOffset,
+              encryptedBuf.byteLength,
             );
             const decrypted = this.curve.decryptBytes(
               privateKey,

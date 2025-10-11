@@ -444,15 +444,15 @@ export function useEERC(
    * @returns boolean - returns true if user is auditor
    */
   const areYouAuditor = useMemo(() => {
-    if (!eerc || !eercState.auditorPublicKey.length) {
+    if (!eerc || !eerc.publicKey || !eercState.auditorPublicKey.length) {
       return false;
     }
 
     return (
-      eercState.auditorPublicKey[0] === eerc?.publicKey[0] &&
-      eercState.auditorPublicKey[1] === eerc?.publicKey[1]
+      eercState.auditorPublicKey[0] === eerc.publicKey[0] &&
+      eercState.auditorPublicKey[1] === eerc.publicKey[1]
     );
-  }, [eerc, eercState.auditorPublicKey]);
+  }, [eerc, eerc?.publicKey, eercState.auditorPublicKey]);
 
   /**
    * set contract auditor public key
@@ -472,7 +472,7 @@ export function useEERC(
     isAllDataFetched: eercState.isAllDataFetched, // is all data fetched
     isRegistered: eercState.isRegistered, // is user registered to the contract
     isConverter: eercState.isConverter, // is contract converter
-    publicKey: eerc?.publicKey ?? [], // user's public key
+  publicKey: eerc?.publicKey ?? [0n, 0n], // user's public key
     auditorAddress, // auditor address
     owner: eercState.owner, // owner address
     auditorPublicKey: eercState.auditorPublicKey, // auditor's public key
