@@ -603,6 +603,116 @@ export class EERC {
   }
 
   /**
+   * Withdraws tokens using intent-based metadata for enhanced privacy
+   * @param amount Amount to withdraw
+   * @param encryptedBalance Current encrypted balance
+   * @param decryptedBalance Current decrypted balance
+   * @param auditorPublicKey Auditor's public key
+   * @param tokenAddress Address of the token to withdraw
+   * @param destination Optional destination address (defaults to sender)
+   * @param memo Optional memo for the withdrawal
+   * @returns Object containing transaction hash
+   */
+  async withdrawWithIntent(
+    amount: bigint,
+    encryptedBalance: bigint[],
+    decryptedBalance: bigint,
+    auditorPublicKey: bigint[],
+    tokenAddress: string,
+    destination?: string,
+    memo?: string,
+  ): Promise<OperationResult> {
+    // only work if eerc is converter
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+    this.validateAmount(amount, decryptedBalance);
+
+    try {
+      const tokenId = await this.fetchTokenId(tokenAddress);
+
+      const newBalance = decryptedBalance - amount;
+      const privateKey = formatKeyForCurve(this.decryptionKey);
+
+      // 1. Create PCT for the user with the new balance
+      const {
+        cipher: senderCipherText,
+        nonce: senderPoseidonNonce,
+        authKey: senderAuthKey,
+      } = await this.poseidon.processPoseidonEncryption({
+        inputs: [newBalance],
+        publicKey: this.publicKey as Point,
+      });
+
+      // 2. Create PCT for the auditor with the withdraw amount
+      const {
+        cipher: auditorCipherText,
+        nonce: auditorPoseidonNonce,
+        authKey: auditorAuthKey,
+        encryptionRandom: auditorEncryptionRandom,
+      } = await this.poseidon.processPoseidonEncryption({
+        inputs: [amount],
+        publicKey: auditorPublicKey as Point,
+      });
+
+      // 3. Create encrypted intent metadata
+      const intent = {
+        amount: amount.toString(),
+        destination: destination || (await this.wallet.account?.address),
+        tokenId: tokenId.toString(),
+        memo: memo || "",
+        timestamp: Date.now(),
+      };
+
+      const intentJson = JSON.stringify(intent);
+      const intentMetadata = await this.encryptMessage(intentJson);
+
+      const input = {
+        ValueToWithdraw: amount,
+        SenderPrivateKey: privateKey,
+        SenderPublicKey: this.publicKey,
+        SenderBalance: decryptedBalance,
+        SenderBalanceC1: encryptedBalance.slice(0, 2),
+        SenderBalanceC2: encryptedBalance.slice(2, 4),
+        AuditorPublicKey: auditorPublicKey,
+        AuditorPCT: auditorCipherText,
+        AuditorPCTAuthKey: auditorAuthKey,
+        AuditorPCTNonce: auditorPoseidonNonce,
+        AuditorPCTRandom: auditorEncryptionRandom,
+      };
+
+      // Generate proof (same as regular withdraw)
+      const proof = await this.generateProof(input, "WITHDRAW");
+
+      const userBalancePCT = [
+        ...senderCipherText,
+        ...senderAuthKey,
+        senderPoseidonNonce,
+      ].map(String);
+
+      // Call withdrawWithIntent instead of withdraw
+      const transactionHash = await this.wallet.writeContract({
+        abi: this.snarkjsMode
+          ? this.encryptedErcAbi
+          : this.legacyEncryptedErcAbi,
+        address: this.contractAddress as `0x${string}`,
+        functionName: "withdrawWithIntent",
+        args: this.snarkjsMode
+          ? [tokenId, proof, userBalancePCT, intentMetadata]
+          : [
+              tokenId,
+              (proof as IProof).proof,
+              (proof as IProof).publicInputs,
+              userBalancePCT,
+              intentMetadata,
+            ],
+      });
+
+      return { transactionHash };
+    } catch (e) {
+      throw new Error(e as string);
+    }
+  }
+
+  /**
    * function to generate transfer proof for private burn and transfer
    * @param to recipient address
    * @param amount transfer amount
@@ -1267,5 +1377,158 @@ export class EERC {
           ],
         };
     }
+  }
+
+  /**
+   * Converts a UTF-8 string into bigint chunks by interpreting its bytes as a base-256 number
+   * @param s String to convert
+   * @returns Array of bigint chunks and length
+   */
+  private str2int(s: string): [bigint[], bigint] {
+    if (s === "") {
+      return [[0n], 1n];
+    }
+
+    // Convert string to hex
+    const buf = Buffer.from(s, "utf8");
+    const hexString = buf.toString("hex");
+    const result = hexString === "" ? 0n : BigInt(`0x${hexString}`);
+
+    // Split into 250-bit chunks
+    const chunks: bigint[] = [];
+    const chunkSize = 2n ** 250n;
+
+    if (result === 0n) {
+      return [[0n], 1n];
+    }
+
+    let remaining = result;
+    while (remaining > 0n) {
+      chunks.push(remaining % chunkSize);
+      remaining = remaining / chunkSize;
+    }
+
+    return [chunks, BigInt(chunks.length)];
+  }
+
+  /**
+   * Converts bigint chunks back into a UTF-8 string
+   * @param input Array of bigint chunks
+   * @returns Decoded string
+   */
+  private int2str(input: bigint[]): string {
+    if (input.length === 1 && input[0] === 0n) {
+      return "";
+    }
+
+    // Combine chunks
+    const chunkSize = 2n ** 250n;
+    let result = 0n;
+    for (let i = input.length - 1; i >= 0; i--) {
+      result = result * chunkSize + input[i];
+    }
+
+    if (result === 0n) {
+      return "";
+    }
+
+    // Convert to hex and then to string
+    let hex = result.toString(16);
+    if (hex.length % 2 !== 0) {
+      hex = `0${hex}`;
+    }
+    const buf = Buffer.from(hex, "hex");
+
+    return buf.toString("utf8").replace(/\u0000/g, "");
+  }
+
+  /**
+   * Encrypts a string message using Poseidon encryption
+   * @param message String message to encrypt
+   * @returns Encrypted bytes as hex string
+   */
+  private async encryptMessage(message: string): Promise<`0x${string}`> {
+    const [messageFieldElements, length] = this.str2int(message);
+
+    const {
+      cipher: ciphertext,
+      nonce,
+      authKey,
+    } = await this.poseidon.processPoseidonEncryption({
+      inputs: messageFieldElements,
+      publicKey: this.publicKey as Point,
+    });
+
+    // Create components array
+    const components: string[] = [];
+
+    // Helper to pad to 32 bytes
+    const pad32 = (value: bigint): string => {
+      const hex = value.toString(16);
+      return "0x" + hex.padStart(64, "0");
+    };
+
+    components.push(pad32(length).slice(2)); // length (32 bytes)
+    components.push(pad32(nonce).slice(2)); // nonce (32 bytes)
+    components.push(pad32(authKey[0]).slice(2)); // authKey[0] (32 bytes)
+    components.push(pad32(authKey[1]).slice(2)); // authKey[1] (32 bytes)
+
+    // Add ciphertext chunks
+    for (const chunk of ciphertext) {
+      components.push(pad32(chunk).slice(2));
+    }
+
+    return `0x${components.join("")}`;
+  }
+
+  /**
+   * Decrypts an encrypted message from withdrawal intent metadata
+   * @param encryptedMessage Encrypted message as hex string
+   * @returns Decrypted string message
+   */
+  public decryptWithdrawIntent(encryptedMessage: string): {
+    amount: string;
+    destination: string;
+    tokenId: string;
+    memo: string;
+    timestamp: number;
+  } {
+    const hexData = encryptedMessage.startsWith("0x")
+      ? encryptedMessage.slice(2)
+      : encryptedMessage;
+
+    // Parse components
+    const lengthHex = `0x${hexData.slice(0, 64)}`;
+    const nonceHex = `0x${hexData.slice(64, 128)}`;
+    const authKey0Hex = `0x${hexData.slice(128, 192)}`;
+    const authKey1Hex = `0x${hexData.slice(192, 256)}`;
+
+    const length = BigInt(lengthHex);
+    const nonce = BigInt(nonceHex);
+    const authKey: Point = [BigInt(authKey0Hex), BigInt(authKey1Hex)];
+
+    // Parse ciphertext
+    const ciphertextHex = hexData.slice(256);
+    const ciphertext: bigint[] = [];
+
+    for (let i = 0; i < ciphertextHex.length; i += 64) {
+      const chunkHex = `0x${ciphertextHex.slice(i, i + 64)}`;
+      ciphertext.push(BigInt(chunkHex));
+    }
+
+    // Decrypt
+    const privateKey = formatKeyForCurve(this.decryptionKey);
+    const decryptedFieldElements = this.poseidon.processPoseidonDecryption({
+      privateKey,
+      authKey,
+      cipher: ciphertext,
+      nonce,
+      length: Number(length),
+    });
+
+    const decryptedMessage = this.int2str(decryptedFieldElements);
+
+    // Parse JSON
+    return JSON.parse(decryptedMessage);
   }
 }
