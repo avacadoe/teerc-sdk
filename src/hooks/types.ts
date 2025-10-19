@@ -17,6 +17,35 @@ export type OperationResult = {
   transactionHash: `0x${string}`;
 };
 
+export type IntentExecutionData = {
+  amount: bigint;
+  destination: string;
+  tokenId: bigint;
+  nonce: bigint;
+  proof: any;
+  balancePCT: string[];
+  metadata: string;
+};
+
+export type SubmitIntentResult = {
+  intentHash: string;
+  transactionHash: `0x${string}`;
+  executionData: IntentExecutionData;
+};
+
+export type IntentStatus = {
+  exists: boolean;
+  user: string;
+  tokenId: bigint;
+  timestamp: number;
+  executed: boolean;
+  cancelled: boolean;
+  canUserExecute: boolean;
+  canRelayerExecute: boolean;
+  isExpired: boolean;
+  timeUntilExecutable: number;
+};
+
 export type DecryptedTransaction = {
   type: string;
   amount: string;

@@ -16,6 +16,9 @@ import type {
   IProveFunction,
   OperationResult,
   eERC_Proof,
+  SubmitIntentResult,
+  IntentExecutionData,
+  IntentStatus,
 } from "./hooks/types";
 import {
   BURN_USER,
@@ -707,6 +710,282 @@ export class EERC {
       });
 
       return { transactionHash };
+    } catch (e) {
+      throw new Error(e as string);
+    }
+  }
+
+  /**
+   * Submit a private withdraw intent (Phase 1 - MVP)
+   * @param amount Amount to withdraw
+   * @param destination Destination address for withdrawal
+   * @param encryptedBalance Current encrypted balance
+   * @param decryptedBalance Current decrypted balance
+   * @param auditorPublicKey Auditor's public key
+   * @param tokenAddress Token address (for converter mode)
+   * @param nonce Nonce for this intent (default: 1)
+   * @param memo Optional memo
+   * @returns Intent hash, transaction hash, and execution data to store locally
+   */
+  async submitWithdrawIntent(
+    amount: bigint,
+    destination: string,
+    encryptedBalance: bigint[],
+    decryptedBalance: bigint,
+    auditorPublicKey: bigint[],
+    tokenAddress: string,
+    nonce: bigint = 1n,
+    memo?: string,
+  ): Promise<SubmitIntentResult> {
+    // only work if eerc is converter
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+    this.validateAmount(amount, decryptedBalance);
+    this.validateAddress(destination);
+
+    try {
+      const tokenId = await this.fetchTokenId(tokenAddress);
+
+      const newBalance = decryptedBalance - amount;
+      const privateKey = formatKeyForCurve(this.decryptionKey);
+
+      // 1. Create PCT for the user with the new balance
+      const {
+        cipher: senderCipherText,
+        nonce: senderPoseidonNonce,
+        authKey: senderAuthKey,
+      } = await this.poseidon.processPoseidonEncryption({
+        inputs: [newBalance],
+        publicKey: this.publicKey as Point,
+      });
+
+      // 2. Create PCT for the auditor with the withdraw amount
+      const {
+        cipher: auditorCipherText,
+        nonce: auditorPoseidonNonce,
+        authKey: auditorAuthKey,
+        encryptionRandom: auditorEncryptionRandom,
+      } = await this.poseidon.processPoseidonEncryption({
+        inputs: [amount],
+        publicKey: auditorPublicKey as Point,
+      });
+
+      // 3. Create encrypted intent metadata
+      const intent = {
+        amount: amount.toString(),
+        destination,
+        tokenId: tokenId.toString(),
+        nonce: nonce.toString(),
+        memo: memo || "",
+        timestamp: Date.now(),
+      };
+
+      const intentJson = JSON.stringify(intent);
+      const intentMetadata = await this.encryptMessage(intentJson);
+
+      // 4. Convert destination address to bigint for circuit
+      const destinationBigInt = BigInt(destination);
+
+      const input = {
+        ValueToWithdraw: amount,
+        Destination: destinationBigInt,
+        TokenId: tokenId,
+        Nonce: nonce,
+        SenderPrivateKey: privateKey,
+        SenderPublicKey: this.publicKey,
+        SenderBalance: decryptedBalance,
+        SenderBalanceC1: encryptedBalance.slice(0, 2),
+        SenderBalanceC2: encryptedBalance.slice(2, 4),
+        AuditorPublicKey: auditorPublicKey,
+        AuditorPCT: auditorCipherText,
+        AuditorPCTAuthKey: auditorAuthKey,
+        AuditorPCTNonce: auditorPoseidonNonce,
+        AuditorPCTRandom: auditorEncryptionRandom,
+      };
+
+      // 5. Generate proof (will use withdrawIntent circuit)
+      const proof = await this.generateProof(input, "WITHDRAW");
+
+      const userBalancePCT = [
+        ...senderCipherText,
+        ...senderAuthKey,
+        senderPoseidonNonce,
+      ].map(String);
+
+      // 6. Extract intentHash from proof public signals[15]
+      let intentHash: string;
+      if (this.snarkjsMode) {
+        intentHash = "0x" + BigInt((proof as eERC_Proof).publicSignals[15]).toString(16).padStart(64, '0');
+      } else {
+        intentHash = "0x" + BigInt((proof as IProof).publicInputs[15]).toString(16).padStart(64, '0');
+      }
+
+      // 7. Call contract submitWithdrawIntent
+      const transactionHash = await this.wallet.writeContract({
+        abi: this.snarkjsMode
+          ? this.encryptedErcAbi
+          : this.legacyEncryptedErcAbi,
+        address: this.contractAddress as `0x${string}`,
+        functionName: "submitWithdrawIntent",
+        args: this.snarkjsMode
+          ? [tokenId, proof, userBalancePCT, intentMetadata]
+          : [
+              tokenId,
+              (proof as IProof).proof,
+              (proof as IProof).publicInputs,
+              userBalancePCT,
+              intentMetadata,
+            ],
+      });
+
+      // 8. Return data needed for execution
+      const executionData: IntentExecutionData = {
+        amount,
+        destination,
+        tokenId,
+        nonce,
+        proof,
+        balancePCT: userBalancePCT,
+        metadata: intentMetadata,
+      };
+
+      return {
+        intentHash,
+        transactionHash,
+        executionData,
+      };
+    } catch (e) {
+      throw new Error(e as string);
+    }
+  }
+
+  /**
+   * Execute a previously submitted withdraw intent (Phase 1 - MVP)
+   * @param intentHash Hash of the intent to execute
+   * @param executionData Execution data returned from submitWithdrawIntent
+   * @returns Transaction hash
+   */
+  async executeWithdrawIntent(
+    intentHash: string,
+    executionData: IntentExecutionData,
+  ): Promise<OperationResult> {
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+
+    try {
+      const { tokenId, destination, amount, nonce, proof, balancePCT, metadata } = executionData;
+
+      // Call contract executeWithdrawIntent
+      const transactionHash = await this.wallet.writeContract({
+        abi: this.snarkjsMode
+          ? this.encryptedErcAbi
+          : this.legacyEncryptedErcAbi,
+        address: this.contractAddress as `0x${string}`,
+        functionName: "executeWithdrawIntent",
+        args: this.snarkjsMode
+          ? [intentHash, tokenId, destination, amount, nonce, proof, balancePCT, metadata]
+          : [
+              intentHash,
+              tokenId,
+              destination,
+              amount,
+              nonce,
+              (proof as IProof).proof,
+              (proof as IProof).publicInputs,
+              balancePCT,
+              metadata,
+            ],
+      });
+
+      return { transactionHash };
+    } catch (e) {
+      throw new Error(e as string);
+    }
+  }
+
+  /**
+   * Cancel a pending withdraw intent (Phase 1 - MVP)
+   * @param intentHash Hash of the intent to cancel
+   * @returns Transaction hash
+   */
+  async cancelWithdrawIntent(intentHash: string): Promise<OperationResult> {
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+
+    try {
+      const transactionHash = await this.wallet.writeContract({
+        abi: this.snarkjsMode
+          ? this.encryptedErcAbi
+          : this.legacyEncryptedErcAbi,
+        address: this.contractAddress as `0x${string}`,
+        functionName: "cancelWithdrawIntent",
+        args: [intentHash],
+      });
+
+      return { transactionHash };
+    } catch (e) {
+      throw new Error(e as string);
+    }
+  }
+
+  /**
+   * Get status of a withdraw intent (Phase 1 - MVP)
+   * @param intentHash Hash of the intent
+   * @returns Intent status with timing information
+   */
+  async getIntentStatus(intentHash: string): Promise<IntentStatus> {
+    if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+
+    try {
+      // Query contract for intent data
+      const intent = await this.client.readContract({
+        abi: this.snarkjsMode
+          ? this.encryptedErcAbi
+          : this.legacyEncryptedErcAbi,
+        address: this.contractAddress as `0x${string}`,
+        functionName: "withdrawIntents",
+        args: [intentHash],
+      }) as any;
+
+      const exists = intent.user !== "0x0000000000000000000000000000000000000000";
+
+      if (!exists) {
+        return {
+          exists: false,
+          user: "",
+          tokenId: 0n,
+          timestamp: 0,
+          executed: false,
+          cancelled: false,
+          canUserExecute: false,
+          canRelayerExecute: false,
+          isExpired: false,
+          timeUntilExecutable: 0,
+        };
+      }
+
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timeSinceSubmission = currentTime - Number(intent.timestamp);
+
+      const USER_ONLY_DELAY = 3600; // 1 hour
+      const PERMISSIONLESS_DELAY = 86400; // 24 hours
+      const INTENT_EXPIRY = 604800; // 7 days
+
+      const canUserExecute = timeSinceSubmission >= USER_ONLY_DELAY && !intent.executed && !intent.cancelled;
+      const canRelayerExecute = timeSinceSubmission >= PERMISSIONLESS_DELAY && !intent.executed && !intent.cancelled;
+      const isExpired = timeSinceSubmission >= INTENT_EXPIRY;
+
+      const timeUntilExecutable = Math.max(0, USER_ONLY_DELAY - timeSinceSubmission);
+
+      return {
+        exists: true,
+        user: intent.user,
+        tokenId: BigInt(intent.tokenId),
+        timestamp: Number(intent.timestamp),
+        executed: intent.executed,
+        cancelled: intent.cancelled,
+        canUserExecute,
+        canRelayerExecute,
+        isExpired,
+        timeUntilExecutable,
+      };
     } catch (e) {
       throw new Error(e as string);
     }
