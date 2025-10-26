@@ -657,7 +657,7 @@ export class EERC {
      * @param encryptedBalance encrypted balance
      * @param decryptedBalance decrypted balance
      * @param auditorPublicKey auditor public key
-     * @returns transaction hash and intent hash
+     * @returns transaction hash, intent hash, proof, and balancePCT (needed for execution)
      */
     async submitWithdrawIntent(
         amount: bigint,
@@ -667,7 +667,13 @@ export class EERC {
         encryptedBalance: bigint[],
         decryptedBalance: bigint,
         auditorPublicKey: bigint[]
-    ): Promise<{ transactionHash: `0x${string}`; intentHash: string }> {
+    ): Promise<{
+        transactionHash: `0x${string}`;
+        intentHash: string;
+        proof: eERC_Proof | IProof;
+        balancePCT: string[];
+        metadata: string;
+    }> {
         // only work if eerc is converter
         if (!this.isConverter) throw new Error("Not allowed for stand alone!");
         this.validateAmount(amount, decryptedBalance);
@@ -761,7 +767,136 @@ export class EERC {
                 args: [tokenId, proof, userBalancePCT, intentMetadata],
             });
 
-            return { transactionHash, intentHash: intentHash.toString() };
+            return {
+                transactionHash,
+                intentHash: intentHash.toString(),
+                proof,
+                balancePCT: userBalancePCT,
+                metadata: intentMetadata
+            };
+        } catch (e) {
+            throw new Error(e as string);
+        }
+    }
+
+    /**
+     * Execute a previously submitted withdraw intent
+     * @param intentHash Hash identifying the intent to execute
+     * @param tokenId ID of the token to withdraw
+     * @param destination Address to receive the ERC20 tokens
+     * @param amount Amount to withdraw
+     * @param nonce Nonce used in intent hash computation
+     * @param proof The withdraw proof (same as used in submitWithdrawIntent)
+     * @param balancePCT The balance PCT (same as used in submitWithdrawIntent)
+     * @param intentMetadata Encrypted metadata (same as used in submitWithdrawIntent)
+     * @returns transaction hash
+     */
+    async executeWithdrawIntent(
+        intentHash: string,
+        tokenId: bigint,
+        destination: string,
+        amount: bigint,
+        nonce: bigint,
+        proof: eERC_Proof | IProof,
+        balancePCT: string[],
+        intentMetadata: string = "0x"
+    ): Promise<{ transactionHash: `0x${string}` }> {
+        // only work if eerc is converter
+        if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+        this.validateAddress(destination);
+
+        try {
+            const transactionHash = await this.wallet.writeContract({
+                chain: null,
+                account: this.wallet.account!.address,
+                abi: this.encryptedErcAbi,
+                address: this.contractAddress as `0x${string}`,
+                functionName: "executeWithdrawIntent",
+                args: [
+                    intentHash,
+                    tokenId,
+                    destination,
+                    amount,
+                    nonce,
+                    proof,
+                    balancePCT,
+                    intentMetadata
+                ],
+            });
+
+            return { transactionHash };
+        } catch (e) {
+            throw new Error(e as string);
+        }
+    }
+
+    /**
+     * Execute multiple withdraw intents in a single batch transaction
+     * @param intentHashes Array of intent hashes to execute
+     * @param tokenIds Array of token IDs
+     * @param destinations Array of destination addresses
+     * @param amounts Array of amounts to withdraw
+     * @param nonces Array of nonces
+     * @param proofs Array of withdraw proofs
+     * @param balancePCTs Array of balance PCTs
+     * @param intentMetadatas Array of encrypted metadata
+     * @returns transaction hash
+     */
+    async executeBatchWithdrawIntents(
+        intentHashes: string[],
+        tokenIds: bigint[],
+        destinations: string[],
+        amounts: bigint[],
+        nonces: bigint[],
+        proofs: (eERC_Proof | IProof)[],
+        balancePCTs: string[][],
+        intentMetadatas: string[] = []
+    ): Promise<{ transactionHash: `0x${string}` }> {
+        // only work if eerc is converter
+        if (!this.isConverter) throw new Error("Not allowed for stand alone!");
+
+        // Validate array lengths match
+        if (
+            intentHashes.length !== tokenIds.length ||
+            intentHashes.length !== destinations.length ||
+            intentHashes.length !== amounts.length ||
+            intentHashes.length !== nonces.length ||
+            intentHashes.length !== proofs.length ||
+            intentHashes.length !== balancePCTs.length
+        ) {
+            throw new Error("Array length mismatch");
+        }
+
+        // If no metadata provided, fill with empty bytes
+        if (intentMetadatas.length === 0) {
+            intentMetadatas = new Array(intentHashes.length).fill("0x");
+        }
+
+        // Validate all destinations
+        for (const dest of destinations) {
+            this.validateAddress(dest);
+        }
+
+        try {
+            const transactionHash = await this.wallet.writeContract({
+                chain: null,
+                account: this.wallet.account!.address,
+                abi: this.encryptedErcAbi,
+                address: this.contractAddress as `0x${string}`,
+                functionName: "executeBatchWithdrawIntents",
+                args: [
+                    intentHashes,
+                    tokenIds,
+                    destinations,
+                    amounts,
+                    nonces,
+                    proofs,
+                    balancePCTs,
+                    intentMetadatas
+                ],
+            });
+
+            return { transactionHash };
         } catch (e) {
             throw new Error(e as string);
         }
